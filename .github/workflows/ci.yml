@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Typecheck and tests (contract harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The plugin kit and contract are git dependencies on artkoenig/family-agenda, which is
+      # private for now: FAMILY_AGENDA_TOKEN is a token that can read it.
+      - name: Let git read artkoenig/family-agenda
+        env:
+          TOKEN: ${{ secrets.FAMILY_AGENDA_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+          fi
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  dco:
+    name: Every commit is signed off (DCO)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check Signed-off-by lines
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          missing=0
+          for commit in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            author="$(git log -1 --format='%an <%ae>' "$commit")"
+            if ! git log -1 --format=%B "$commit" | grep -qF "Signed-off-by: $author"; then
+              echo "::error::$commit has no Signed-off-by: $author"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+  image:
+    name: Build the image, and publish it on a version tag
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/artkoenig/family-agenda-ics
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check that a version tag matches the plugin's version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          package="$(node -p 'require("./package.json").version')"
+          plugin="$(sed -n 's/^export const version = "\(.*\)";$/\1/p' src/plugin.ts)"
+          [ "$tag" = "$package" ] && [ "$tag" = "$plugin" ] || { echo "::error::Tag $tag, package.json $package, plugin $plugin"; exit 1; }
+      - uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ startsWith(github.ref, 'refs/tags/v') }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          secrets: |
+            github_token=${{ secrets.FAMILY_AGENDA_TOKEN }}
