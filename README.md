@@ -13,7 +13,7 @@ In `plugins.yml` of an Instance, with the calendar's host as egress (the address
 ```yaml
 plugins:
   - id: ics
-    image: ghcr.io/artkoenig/family-agenda-ics:0.1.0
+    image: ghcr.io/artkoenig/family-agenda-ics:0.2.0
     egress: [calendar.google.com:443]
 ```
 
