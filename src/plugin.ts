@@ -1,4 +1,7 @@
+import { z } from "zod";
+import type { configSchema } from "@family-agenda/plugin-contract";
 import { PluginError, type PluginImplementation } from "@family-agenda/plugin-kit";
+import packageJson from "../package.json" with { type: "json" };
 import { calendarAttribute, parseCalendar, sourceRecordOf } from "./calendar";
 
 export type IcsPluginOptions = {
@@ -8,15 +11,19 @@ export type IcsPluginOptions = {
   timeoutMs?: number;
 };
 
-/** The plugin's own version, raised with each release. */
-export const version = "0.1.0";
+/** The plugin's own version: that of package.json, raised with each release. */
+export const version: string = packageJson.version;
 
 /** The sync cursor: the calendar's ETag and the UIDs of the entries it had, to notice those that go. */
-type State = { etag: string | null; known: string[] };
+const stateSchema = z.object({
+  etag: z.string().nullable().catch(null),
+  known: z.array(z.unknown()).transform((uids) => uids.filter((uid) => typeof uid === "string")).catch([]),
+});
+type State = z.output<typeof stateSchema>;
 
 type Download = { body: string; etag: string | null };
 
-type Config = { plain: Record<string, unknown>; secrets: Record<string, string> };
+type Config = z.infer<typeof configSchema>;
 
 /**
  * Reads a calendar from its secret ICS address and states each entry's Event whole, keyed by UID.
@@ -105,11 +112,12 @@ export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplement
       }
       const calendar = parseCalendar(downloaded.body, context.timeZone);
       const known = calendar.entries.map((entry) => entry.uid);
+      const stillThere = new Set(known);
       const state: State = { etag: downloaded.etag, known };
       return {
         sourceRecords: calendar.entries.map(sourceRecordOf),
         syncCursor: JSON.stringify(state),
-        withdrawn: previous.known.filter((uid) => !known.includes(uid)),
+        withdrawn: previous.known.filter((uid) => !stillThere.has(uid)),
         attributes: {
           declared: [{ externalId: calendarAttribute, name: configuredName(context.config) ?? calendar.name ?? "Calendar" }],
           archived: [],
@@ -135,12 +143,13 @@ function configuredName(config: Config): string | null {
 }
 
 function parseState(state: string | null): State {
-  if (state === null) return { etag: null, known: [] };
+  const fresh: State = { etag: null, known: [] };
+  if (state === null) return fresh;
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(state) as Partial<State>;
-    const known = Array.isArray(parsed.known) ? parsed.known.filter((uid) => typeof uid === "string") : [];
-    return { etag: typeof parsed.etag === "string" ? parsed.etag : null, known };
+    parsed = JSON.parse(state);
   } catch {
-    return { etag: null, known: [] };
+    return fresh;
   }
+  return stateSchema.catch(fresh).parse(parsed);
 }

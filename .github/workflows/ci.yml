@@ -15,21 +15,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The plugin kit and contract are git dependencies on artkoenig/family-agenda, which is
-      # private for now: FAMILY_AGENDA_TOKEN is a token that can read it.
-      - name: Let git read artkoenig/family-agenda
-        env:
-          TOKEN: ${{ secrets.FAMILY_AGENDA_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
-          fi
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      # The plugin kit and contract are git dependencies on artkoenig/family-agenda, which is
+      # private for now: FAMILY_AGENDA_TOKEN is a token that can read it. The git configuration
+      # lives in this step's environment only.
+      - name: Install
+        env:
+          TOKEN: ${{ secrets.FAMILY_AGENDA_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            export GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"
+            export GIT_CONFIG_VALUE_0="https://github.com/"
+          fi
+          pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
 
@@ -67,14 +70,14 @@ jobs:
       IMAGE: ghcr.io/artkoenig/family-agenda-ics
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The plugin reads its version from package.json, so that is the one to match.
       - name: Check that a version tag matches the plugin's version
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           tag="${GITHUB_REF_NAME#v}"
           package="$(node -p 'require("./package.json").version')"
-          plugin="$(sed -n 's/^export const version = "\(.*\)";$/\1/p' src/plugin.ts)"
-          [ "$tag" = "$package" ] && [ "$tag" = "$plugin" ] || { echo "::error::Tag $tag, package.json $package, plugin $plugin"; exit 1; }
-      - uses: docker/metadata-action@v6
+          [ "$tag" = "$package" ] || { echo "::error::Tag $tag, package.json $package"; exit 1; }
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         id: meta
         with:
           images: ${{ env.IMAGE }}
@@ -82,15 +85,15 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           platforms: linux/amd64,linux/arm64

@@ -121,6 +121,27 @@ describe("the ICS plugin", () => {
     expect(sourceRecords[1]?.link).toBeUndefined();
   });
 
+  it("drops an entry's link that is no web address it can parse", async () => {
+    const entries = ["UID:mail\r\nURL:mailto:club@example.org", "UID:broken\r\nURL:https://exa mple.org/x"];
+    const body = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${entries
+      .map((entry) => `BEGIN:VEVENT\r\n${entry}\r\nDTSTART;VALUE=DATE:20260918\r\nSUMMARY:Entry\r\nEND:VEVENT\r\n`)
+      .join("")}END:VCALENDAR\r\n`;
+    const { poll } = icsPlugin({ fetch: server(calendar(body)).fetch });
+
+    const { sourceRecords } = await poll();
+
+    expect(sourceRecords.map((record) => [record.externalId, record.link])).toEqual([
+      ["mail", undefined],
+      ["broken", undefined],
+    ]);
+  });
+
+  it("fails definitely on an address that is no web address", async () => {
+    const { answer } = icsPlugin({ fetch: server().fetch });
+
+    expect(await answer({ config: { plain: {}, secrets: { url: "file:///etc/passwd" } } })).toMatchObject({ status: 422, body: { kind: "definite" } });
+  });
+
   it("states every entry again once the calendar changed, and withdraws those gone from it", async () => {
     const { poll } = icsPlugin({ fetch: server(calendar(fixture("family-v1.ics")), calendar(fixture("family-v2.ics"))).fetch });
     const first = await poll();
@@ -333,7 +354,7 @@ describe("the ICS plugin", () => {
     expect(await answer()).toMatchObject({ status, body: { kind } });
   });
 
-  it.each(["file:///etc/passwd", "not an address", ""])("fails definitely on %j, which is no web address", async (address) => {
+  it.each(["not an address", ""])("fails definitely on %j, which is no web address", async (address) => {
     const { answer } = icsPlugin({ fetch: server().fetch });
 
     expect(await answer({ config: { plain: {}, secrets: { url: address } } })).toMatchObject({ status: 422, body: { kind: "definite" } });
