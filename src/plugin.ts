@@ -76,6 +76,8 @@ export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplement
             secret: true,
             required: true,
             hasChoices: false,
+            // The core keeps the host apart for the egress proxy, without the token (contract 1.2).
+            host: true,
             description: {
               en: 'Such as Google Calendar\'s "Secret address in iCal format". Anyone with it can read the calendar.',
               de: "Etwa die „Privatadresse im iCal-Format“ von Google Kalender. Wer sie kennt, kann den Kalender lesen.",
