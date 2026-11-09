@@ -27,8 +27,6 @@ Node 26 and pnpm (`corepack enable`). The plugin kit and the plugin contract are
 - `pnpm check`: typecheck, and the tests including the plugin kit's contract harness, in-process
 - `pnpm start`: serves the plugin on `PORT` (8080)
 
-While `artkoenig/family-agenda` is private, installing needs git access to it: locally over ssh (`git config --global url."git@github.com:".insteadOf https://github.com/`), in CI with the secret `FAMILY_AGENDA_TOKEN`, a token that can read it.
-
 ## Releasing
 
 Raise `version` in `package.json` and `src/plugin.ts`, merge, and push the tag `vX.Y.Z` on main. CI then publishes `ghcr.io/artkoenig/family-agenda-ics` as `X.Y.Z` and `X.Y`.

@@ -20,19 +20,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      # The plugin kit and contract are git dependencies on artkoenig/family-agenda, which is
-      # private for now: FAMILY_AGENDA_TOKEN is a token that can read it. The git configuration
-      # lives in this step's environment only.
-      - name: Install
-        env:
-          TOKEN: ${{ secrets.FAMILY_AGENDA_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            export GIT_CONFIG_COUNT=1
-            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/.insteadOf"
-            export GIT_CONFIG_VALUE_0="https://github.com/"
-          fi
-          pnpm install --frozen-lockfile
+      # The plugin kit and contract are git dependencies on artkoenig/family-agenda, pinned to a commit.
+      - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
 
@@ -100,5 +89,3 @@ jobs:
           push: ${{ startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          secrets: |
-            github_token=${{ secrets.FAMILY_AGENDA_TOKEN }}
