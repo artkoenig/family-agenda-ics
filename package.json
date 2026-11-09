@@ -17,8 +17,8 @@
     "check": "pnpm typecheck && pnpm test"
   },
   "dependencies": {
-    "@family-agenda/plugin-contract": "github:artkoenig/family-agenda#715ae30ce03fe4bfbfb49d9bb6e539bba454de94&path:/packages/plugin-contract",
-    "@family-agenda/plugin-kit": "github:artkoenig/family-agenda#715ae30ce03fe4bfbfb49d9bb6e539bba454de94&path:/packages/plugin-kit",
+    "@family-agenda/plugin-contract": "github:artkoenig/family-agenda#6097e37f4dec45287dbe978aa8e14f49ba90f605&path:/packages/plugin-contract",
+    "@family-agenda/plugin-kit": "github:artkoenig/family-agenda#6097e37f4dec45287dbe978aa8e14f49ba90f605&path:/packages/plugin-kit",
     "ical.js": "^2.2.1",
     "zod": "^4.6.7"
   },
