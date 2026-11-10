@@ -100,6 +100,13 @@ export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplement
       ingestion: { mode: "polling", suggestedIntervalSeconds: 15 * 60 },
       silentApplies: false,
     },
+    // The calendar is the one Source Attribute: named as configured, or else as it names itself.
+    async sourceAttributes(context) {
+      const configured = configuredName(context.config);
+      const downloaded = configured ? null : await download(context.config, null);
+      const name = configured ?? ((downloaded && parseCalendar(downloaded.body, context.timeZone).name) || "Calendar");
+      return { declared: [{ externalId: calendarAttribute, name }], archived: [] };
+    },
     async poll(context) {
       const previous = parseState(context.syncCursor);
       const downloaded = await download(context.config, previous.etag);

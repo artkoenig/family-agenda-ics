@@ -40,7 +40,12 @@ function icsPlugin(options: IcsPluginOptions) {
     if (status !== 200) throw new Error(`poll answered ${status}: ${JSON.stringify(body)}`);
     return body as IngestResult;
   };
-  return { answer, poll };
+  const attributes = async (context: Context = {}) => {
+    const { status, body } = await call("sourceAttributes", { config, syncCursor: null, now: now.toISOString(), timeZone: "Europe/Berlin", ...context });
+    if (status !== 200) throw new Error(`sourceAttributes answered ${status}: ${JSON.stringify(body)}`);
+    return body as NonNullable<IngestResult["attributes"]>;
+  };
+  return { answer, poll, attributes };
 }
 
 /** Each Source Record as its UID and the Event it states. */
@@ -268,6 +273,20 @@ describe("the ICS plugin", () => {
     ]);
   });
 
+  it("names the calendar apart from a run as an Admin named it, without downloading it", async () => {
+    const { fetch, requests } = server();
+    const { attributes } = icsPlugin({ fetch });
+
+    expect(await attributes({ config: { plain: { name: "Clubs" }, secrets: { url } } })).toEqual({ declared: [{ externalId: "calendar", name: "Clubs" }], archived: [] });
+    expect(requests).toEqual([]);
+  });
+
+  it("names the calendar apart from a run as it names itself, or Calendar", async () => {
+    expect((await icsPlugin({ fetch: server(calendar(fixture("family-v1.ics"))).fetch }).attributes()).declared).toEqual(
+      (await icsPlugin({ fetch: server(calendar(fixture("family-v1.ics"))).fetch }).poll()).attributes?.declared,
+    );
+  });
+
   it("keeps an Admin's calendar name when the calendar has not changed", async () => {
     const { poll } = icsPlugin({ fetch: server(new Response(null, { status: 304 })).fetch });
 
@@ -351,7 +370,8 @@ describe("the ICS plugin", () => {
   ])("fails on $case with a $kind error", async ({ response, status, kind }) => {
     const { answer } = icsPlugin({ fetch: server(response).fetch });
 
-    expect(await answer()).toMatchObject({ status, body: { kind } });
+    const got = await answer();
+    expect(got).toMatchObject({ status, body: { kind } });
   });
 
   it.each(["not an address", ""])("fails definitely on %j, which is no web address", async (address) => {
