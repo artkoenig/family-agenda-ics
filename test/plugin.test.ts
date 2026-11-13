@@ -5,19 +5,20 @@ import { createPluginHandler, servePlugin } from "@family-agenda/plugin-kit/serv
 import { contractProblems, pluginClient, type Answer } from "@family-agenda/plugin-kit/testing";
 import { describePluginContract } from "@family-agenda/plugin-kit/vitest";
 import type { IngestResult } from "@family-agenda/plugin-contract";
-import { createIcsPlugin, type IcsPluginOptions } from "../src/plugin";
+import { createIcsPlugin, type FetchDispatcher, type IcsPluginOptions } from "../src/plugin";
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), "utf8");
 
 const url = "https://calendar.example.org/ical/secret-token/basic.ics";
 const config = { plain: {}, secrets: { url } };
 const now = new Date("2026-09-14T07:00:00Z");
+const egressProxy = "http://ticket:t@plugin-ics-egress:3128";
 
 /** A calendar server that answers every request with the next of the given responses. */
 function server(...responses: (Response | Error)[]) {
-  const requests: { url: string; headers: Headers }[] = [];
-  const fetch = (input: string | URL | Request, init?: RequestInit) => {
-    requests.push({ url: input instanceof Request ? input.url : input.toString(), headers: new Headers(init?.headers) });
+  const requests: { url: string; headers: Headers; dispatcher: unknown }[] = [];
+  const fetch = (input: string | URL | Request, init?: RequestInit & { dispatcher?: unknown }) => {
+    requests.push({ url: input instanceof Request ? input.url : input.toString(), headers: new Headers(init?.headers), dispatcher: init?.dispatcher });
     const next = responses.shift();
     if (!next) throw new Error("no more responses");
     return next instanceof Error ? Promise.reject(next) : Promise.resolve(next);
@@ -28,20 +29,20 @@ function server(...responses: (Response | Error)[]) {
 const calendar = (body: string, headers: Record<string, string> = {}) =>
   new Response(body, { status: 200, headers: { "content-type": "text/calendar", ...headers } });
 
-type Context = { config?: { plain: Record<string, unknown>; secrets: Record<string, string> }; syncCursor?: string | null };
+type Context = { config?: { plain: Record<string, unknown>; secrets: Record<string, string> }; syncCursor?: string | null; egressProxy?: string };
 
 /** A plugin as the core sees it, over the kit's validating handler: polls answer status and body. */
 function icsPlugin(options: IcsPluginOptions) {
   const call = pluginClient(createPluginHandler(createIcsPlugin(options)));
   const answer = (context: Context = {}): Promise<Answer> =>
-    call("poll", { config, syncCursor: null, now: now.toISOString(), timeZone: "Europe/Berlin", ...context });
+    call("poll", { config, syncCursor: null, now: now.toISOString(), timeZone: "Europe/Berlin", egressProxy, ...context });
   const poll = async (context: Context = {}): Promise<IngestResult> => {
     const { status, body } = await answer(context);
     if (status !== 200) throw new Error(`poll answered ${status}: ${JSON.stringify(body)}`);
     return body as IngestResult;
   };
   const attributes = async (context: Context = {}) => {
-    const { status, body } = await call("sourceAttributes", { config, syncCursor: null, now: now.toISOString(), timeZone: "Europe/Berlin", ...context });
+    const { status, body } = await call("sourceAttributes", { config, syncCursor: null, now: now.toISOString(), timeZone: "Europe/Berlin", egressProxy, ...context });
     if (status !== 200) throw new Error(`sourceAttributes answered ${status}: ${JSON.stringify(body)}`);
     return body as NonNullable<IngestResult["attributes"]>;
   };
@@ -58,7 +59,7 @@ const timed = (start: string, end: string) => ({ allDay: false as const, start, 
 
 const twice = () => createPluginHandler(createIcsPlugin({ fetch: server(calendar(fixture("family-v1.ics")), calendar(fixture("family-v1.ics"))).fetch }));
 
-describePluginContract(twice, { config, now, languages: ["de"] });
+describePluginContract(twice, { config, now, languages: ["de"], egressProxy });
 
 describe("the ICS plugin", () => {
   it("states each calendar entry's Event whole, keyed by UID, cancelled only by its status", async () => {
@@ -394,5 +395,34 @@ describe("the ICS plugin over HTTP", () => {
 
   it("passes the contract tests by its URL", async () => {
     expect(await contractProblems(base, { config, now, languages: ["de"] })).toEqual([]);
+  });
+});
+
+describe("the ICS plugin's connection outside", () => {
+  it("downloads through the egress proxy of the call, not the environment", async () => {
+    const proxies: string[] = [];
+    const { fetch, requests } = server(calendar(fixture("family-v1.ics")));
+    const { poll } = icsPlugin({
+      fetch,
+      dispatcherFor: (proxy) => {
+        proxies.push(proxy);
+        return { proxy } as unknown as FetchDispatcher;
+      },
+    });
+
+    await poll({ egressProxy: "http://ticket:other@plugin-ics-egress:3128" });
+
+    expect(proxies).toEqual(["http://ticket:other@plugin-ics-egress:3128"]);
+    expect(requests[0]?.dispatcher).toEqual({ proxy: "http://ticket:other@plugin-ics-egress:3128" });
+  });
+
+  it("names the Source Attribute through the egress proxy too", async () => {
+    const proxies: string[] = [];
+    const { fetch } = server(calendar(fixture("family-v1.ics")));
+    const { attributes } = icsPlugin({ fetch, dispatcherFor: (proxy) => (proxies.push(proxy), { proxy } as unknown as FetchDispatcher) });
+
+    await attributes();
+
+    expect(proxies).toEqual([egressProxy]);
   });
 });

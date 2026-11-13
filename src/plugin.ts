@@ -1,12 +1,21 @@
+import { ProxyAgent } from "undici";
 import { z } from "zod";
 import type { configSchema } from "@family-agenda/plugin-contract";
 import { PluginError, type PluginImplementation } from "@family-agenda/plugin-kit";
 import packageJson from "../package.json" with { type: "json" };
 import { calendarAttribute, parseCalendar, sourceRecordOf } from "./calendar";
 
+/**
+ * What `fetch` is given to route a request through a proxy, as the global `fetch` types it. Taken
+ * from there rather than from `undici`, whose own declaration is a second, incompatible copy.
+ */
+export type FetchDispatcher = NonNullable<RequestInit["dispatcher"]>;
+
 export type IcsPluginOptions = {
   /** How the plugin reaches the calendar; recorded responses in tests. */
-  fetch?: typeof globalThis.fetch;
+  fetch?: (input: string, init: RequestInit) => Promise<Response>;
+  /** How a call's egress proxy becomes a dispatcher; a `ProxyAgent` of `undici` outside tests. */
+  dispatcherFor?: (egressProxy: string) => FetchDispatcher;
   /** How long a download may take before the run fails, so that one calendar cannot hold up the rest. */
   timeoutMs?: number;
 };
@@ -33,16 +42,22 @@ type Config = z.infer<typeof configSchema>;
  */
 export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplementation {
   const fetch = options.fetch ?? globalThis.fetch;
+  const dispatcherFor = options.dispatcherFor ?? ((egressProxy: string) => new ProxyAgent(egressProxy) as unknown as FetchDispatcher);
   const timeoutMs = options.timeoutMs ?? 30_000;
 
-  /** The calendar, or null if it has not changed since the given ETag. */
-  async function download(config: Config, etag: string | null): Promise<Download | null> {
+  /**
+   * The calendar, or null if it has not changed since the given ETag. Every request goes through
+   * the egress proxy of the call at hand, whose ticket allows this one Source's host (contract 3.0);
+   * a request outside it is refused with 407, which reads as a calendar that cannot be reached.
+   */
+  async function download(config: Config, etag: string | null, egressProxy: string): Promise<Download | null> {
     const url = addressOf(config.secrets.url);
     let response: Response;
     try {
       response = await fetch(url, {
         headers: etag ? { "if-none-match": etag } : {},
         signal: AbortSignal.timeout(timeoutMs),
+        dispatcher: dispatcherFor(egressProxy),
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -76,7 +91,7 @@ export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplement
             secret: true,
             required: true,
             hasChoices: false,
-            // The core keeps the host apart for the egress proxy, without the token (contract 1.2).
+            // The core keeps the host apart, so a call's egress ticket allows it (contract 3.0).
             host: true,
             description: {
               en: 'Such as Google Calendar\'s "Secret address in iCal format". Anyone with it can read the calendar.',
@@ -103,13 +118,13 @@ export function createIcsPlugin(options: IcsPluginOptions = {}): PluginImplement
     // The calendar is the one Source Attribute: named as configured, or else as it names itself.
     async sourceAttributes(context) {
       const configured = configuredName(context.config);
-      const downloaded = configured ? null : await download(context.config, null);
+      const downloaded = configured ? null : await download(context.config, null, context.egressProxy);
       const name = configured ?? ((downloaded && parseCalendar(downloaded.body, context.timeZone).name) || "Calendar");
       return { declared: [{ externalId: calendarAttribute, name }], archived: [] };
     },
     async poll(context) {
       const previous = parseState(context.syncCursor);
-      const downloaded = await download(context.config, previous.etag);
+      const downloaded = await download(context.config, previous.etag, context.egressProxy);
       if (!downloaded) {
         // A calendar that has not changed keeps the name an Admin gave it, should they change that.
         const configured = configuredName(context.config);

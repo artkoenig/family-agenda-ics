@@ -17,7 +17,7 @@ plugins:
     egress: [calendar.google.com:443]
 ```
 
-The image listens on port 8080 and sends its requests through `HTTPS_PROXY` (`NODE_USE_ENV_PROXY=1`).
+The image listens on port 8080 and sends every download through the egress proxy of the call at hand (`egressProxy`, contract 3.0), whose ticket allows the declared hosts and that one Source's address; a request through `HTTPS_PROXY` of the environment is refused with `407`.
 
 ## Developing
 
