@@ -1,6 +1,6 @@
 {
   "name": "family-agenda-ics",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "The ICS calendar Source Type of Family Agenda as a stateless plugin container.",
